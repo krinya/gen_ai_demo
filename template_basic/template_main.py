@@ -185,10 +185,11 @@ class TemplateChatbot:
         workflow.add_edge("rephrase_question", "route_question")
         workflow.add_edge("final_response", END)
         
-        # Re-enable checkpointing for conversation memory
+        # Set up memory checkpointing for conversation memory
         from langgraph.checkpoint.memory import MemorySaver
         
-        # Use in-memory checkpointer for now (can be changed to persistent later)
+        # Use in-memory checkpointer (can be upgraded to persistent later)
+        # This provides conversation memory within the session
         checkpointer = MemorySaver()
         
         # Compile with checkpointer for memory
@@ -430,13 +431,13 @@ class TemplateChatbot:
         else:
             final_answer = state["current_answer"]
         
-        # Add the response to conversation history
-        response_message = AIMessage(content=final_answer)
+        # Add the AI response to the conversation history
+        ai_message = AIMessage(content=final_answer)
         
         return {
             **state,
             "current_answer": final_answer,
-            "messages": state["messages"] + [response_message]
+            "messages": state["messages"] + [ai_message]
         }
     
     # Decision functions for conditional edges
@@ -486,7 +487,7 @@ class TemplateChatbot:
             The chatbot's response
         """
         try:
-            # Create initial state
+            # Create initial state - LangGraph will handle message persistence automatically
             initial_state = ChatbotState(
                 messages=[HumanMessage(content=user_input)],
                 question=user_input,
@@ -502,8 +503,7 @@ class TemplateChatbot:
             )
             
             # Run the workflow with thread configuration for memory
-            config = {"configurable": {"thread_id": self.session_id},
-                      "run_name": f"chat_{self.session_id}"}
+            config = {"configurable": {"thread_id": self.session_id}, "run_name": "chat log"}
             result = await self.app.ainvoke(initial_state, config)
             
             return result["current_answer"]
@@ -515,8 +515,7 @@ class TemplateChatbot:
     def get_conversation_history(self) -> List[BaseMessage]:
         """Get the conversation history for the current session"""
         try:
-            config = {"configurable": {"thread_id": self.session_id},
-                      "run_name": f"chat_hisory_{self.session_id}"}
+            config = {"configurable": {"thread_id": self.session_id}, "run_name": "chat log"}
             # Get the latest state
             state = self.app.get_state(config)
             if state.values:
@@ -529,11 +528,17 @@ class TemplateChatbot:
     def reset_conversation(self):
         """Reset the conversation for the current session"""
         try:
-            # Create new session ID
+            # Create new session ID to start fresh
             self.session_id = str(uuid.uuid4())
             logger.info(f"Conversation reset with new session ID: {self.session_id}")
         except Exception as e:
             logger.error(f"Error resetting conversation: {e}")
+    
+    def new_session(self) -> str:
+        """Create a new conversation session and return the new session ID"""
+        self.session_id = str(uuid.uuid4())
+        logger.info(f"New conversation session created: {self.session_id}")
+        return self.session_id
 
 # Convenience function for external usage
 async def create_chatbot(session_id: Optional[str] = None) -> TemplateChatbot:
